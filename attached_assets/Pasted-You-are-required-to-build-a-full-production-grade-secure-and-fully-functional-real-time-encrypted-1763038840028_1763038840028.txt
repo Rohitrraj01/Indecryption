@@ -1,0 +1,102 @@
+You are required to build a full, production-grade, secure, and fully functional real-time encrypted chat application called “Indecryption 2.0”. This must be built exactly using the MERN stack (MongoDB, Express, React, Node.js) + Socket.IO for real-time communication + TweetNaCl for client-side end-to-end encryption. Follow all instructions strictly and do not skip or simplify ANY detail. Every file, folder, function, component, utility, and route must be created exactly as specified.
+
+REQUIREMENTS (MANDATORY):
+1. Create a complete, working, no-error MERN project with the following folder structure:
+   /server
+     /config
+     /controllers
+     /models
+     /routes
+     /utils
+     server.js
+     package.json
+     .env.example
+
+   /client
+     /src
+       /components
+         Login.js
+         Chat.js
+         UserList.js
+       /utils
+         crypto.js
+       /styles
+         chat.css
+       App.js
+       index.js
+     package.json
+     .env.example
+
+2. The app MUST include:
+   - Real-time chat using Socket.IO (smooth like WhatsApp Web)
+   - Client-side end-to-end encryption using TweetNaCl.box
+   - User keypair generation in-browser
+   - Public key publishing to backend
+   - Secure message sending (ciphertext + nonce)
+   - Secure message receiving and local decryption
+   - MongoDB storing ONLY ciphertext and metadata (no plaintext)
+   - Fully modular components, clean code architecture
+   - Reusable encryption utilities (client-side crypto.js)
+   - No hardcoded secrets EVER
+
+3. Backend must contain:
+   - server.js with Socket.IO integration
+   - keys route: POST /keys/publish, GET /keys/all, GET /keys/:username
+   - Message model storing: from, to, ciphertext, nonce, timestamp
+   - db.js for MongoDB connection
+   - Proper error handling and logging (but no sensitive logs)
+   - Security practices: no CORS misconfig, no plaintext logging, sanitize inputs, no eval, no unsafe crypto
+
+4. Client must contain:
+   - Login screen with username + automatic NaCl keypair generation
+   - Chat screen with:
+       • real-time messages
+       • encryption + decryption hooks
+       • message bubble UI
+       • user list + public keys
+       • publish key button
+   - crypto.js using TweetNaCl:
+       • generateKeyPair()
+       • encryptMessage()
+       • decryptMessage()
+
+5. UX Requirements:
+   - Smooth, stable real-time UI updates
+   - Message list auto-scroll
+   - Error states (network fail, missing keys)
+   - Clear separation of encrypted/private messages
+
+6. Functionality Requirements:
+   - No crashes, no undefined variables, no missing imports
+   - All components must be functional with working encryption
+   - Server and client must run immediately with:
+       cd server && npm install && npm run dev
+       cd client && npm install && npm start
+
+7. Security Requirements (mandatory):
+   - NEVER transmit private keys to server
+   - NEVER log plaintext messages or private keys
+   - All message content must remain encrypted end-to-end
+   - Use TweetNaCl correctly: box for encryption, secure nonce generation
+   - Use HTTPS-ready structure for future deployment
+   - Sanitize all user input on backend
+   - Block plaintext fallback messages (no base64 hacks)
+
+8. Create ALL files completely:
+   - No placeholders
+   - No TODOs left unfinished
+   - FULL working code only
+
+9. After generating the code, produce:
+   - Complete folder tree
+   - All source code for every file
+   - Setup instructions
+   - How encryption works
+   - API documentation
+   - Security notes
+   - Testing instructions (manual + automated)
+
+RULE:
+If any instruction is unclear, assume the most secure, scalable, and production-grade one. Do NOT skip ANY part of this prompt.
+
+Now generate the entire project exactly according to the above specification, with EVERY file included and NO missing details.
