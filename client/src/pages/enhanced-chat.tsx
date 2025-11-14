@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from "react";
+import { useQuery, useMutation } from "@tanstack/react-query";
 import { MessageBubble } from "@/components/MessageBubble";
 import { MessageInput } from "@/components/MessageInput";
 import { ChatHeader } from "@/components/ChatHeader";
@@ -8,22 +9,18 @@ import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Shield } from "lucide-react";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
+import { userApi, contactApi, messageApi, type User, type Contact } from "@/lib/api";
+import { socketService } from "@/lib/socket";
+import { encryptMessage, decryptMessage } from "@/lib/crypto";
+import { useToast } from "@/hooks/use-toast";
 
 interface EnhancedChatPageProps {
+  userId: string;
   username: string;
   publicKey: string;
   secretKey: string;
   mobileNumber: string;
   onLogout: () => void;
-}
-
-interface Contact {
-  id: string;
-  username: string;
-  publicKey: string;
-  isOnline: boolean;
-  nickname?: string;
-  unreadCount?: number;
 }
 
 interface ChatMessage {
@@ -36,86 +33,176 @@ interface ChatMessage {
 }
 
 export function EnhancedChatPage({
+  userId,
   username,
   publicKey,
   secretKey,
   mobileNumber,
   onLogout,
 }: EnhancedChatPageProps) {
-  const [contacts, setContacts] = useState<Contact[]>([
-    { id: "1", username: "alice", nickname: "Alice W.", publicKey: "AbCdEf1234567890XyZ", isOnline: true, unreadCount: 2 },
-    { id: "2", username: "bob", publicKey: "1234567890AbCdEfXyZ", isOnline: true },
-  ]);
-
-  const [allUsers] = useState<Contact[]>([
-    ...contacts,
-    { id: "3", username: "charlie", publicKey: "XyZ1234567890AbCdEf", isOnline: false },
-    { id: "4", username: "david", publicKey: "Abc123XyZ456789", isOnline: true },
-  ]);
-
-  const [selectedContact, setSelectedContact] = useState<Contact | null>(null);
+  const [selectedContact, setSelectedContact] = useState<(Contact & { user: User }) | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [onlineUsers, setOnlineUsers] = useState<Set<string>>(new Set());
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const { toast } = useToast();
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
+  const { data: contacts = [], refetch: refetchContacts } = useQuery({
+    queryKey: ["/api/contacts", userId],
+    queryFn: async () => {
+      const data = await contactApi.getContacts(userId);
+      return data.map((c) => ({ ...c, user: c.user! })).filter((c) => c.user);
+    },
+  });
+
+  const { data: allUsers = [] } = useQuery({
+    queryKey: ["/api/users"],
+    queryFn: () => userApi.getAllUsers(),
+  });
+
+  const addContactMutation = useMutation({
+    mutationFn: async (data: { contactUserId: string; nickname?: string }) => {
+      return contactApi.addContact(userId, data.contactUserId, data.nickname);
+    },
+    onSuccess: () => {
+      refetchContacts();
+      toast({ title: "Contact Added", description: "Contact has been added successfully" });
+    },
+  });
 
   useEffect(() => {
-    scrollToBottom();
+    socketService.on("receive_message", (data) => {
+      if (data.fromUsername !== selectedContact?.user.username) return;
+
+      const recipientPublicKey = selectedContact.user.publicKey;
+      const decrypted = decryptMessage(
+        data.ciphertext,
+        data.nonce,
+        recipientPublicKey,
+        secretKey
+      );
+
+      if (decrypted) {
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: data.id,
+            content: decrypted,
+            timestamp: new Date(data.timestamp),
+            isSent: false,
+            senderUsername: data.fromUsername,
+            isEncrypted: true,
+          },
+        ]);
+      }
+    });
+
+    socketService.on("user_status", (data) => {
+      setOnlineUsers((prev) => {
+        const newSet = new Set(prev);
+        if (data.isOnline) {
+          newSet.add(data.username);
+        } else {
+          newSet.delete(data.username);
+        }
+        return newSet;
+      });
+    });
+
+    return () => {
+      socketService.off("receive_message", () => {});
+      socketService.off("user_status", () => {});
+    };
+  }, [selectedContact, secretKey]);
+
+  useEffect(() => {
+    if (selectedContact) {
+      messageApi.getMessages(username, selectedContact.user.username).then((msgs) => {
+        const decryptedMessages = msgs.map((msg) => {
+          const isSent = msg.fromUsername === username;
+          const senderPubKey = isSent ? selectedContact.user.publicKey : publicKey;
+          const decrypted = decryptMessage(
+            msg.ciphertext,
+            msg.nonce,
+            senderPubKey,
+            secretKey
+          );
+
+          return {
+            id: msg.id,
+            content: decrypted || "[Failed to decrypt]",
+            timestamp: new Date(msg.timestamp),
+            isSent,
+            senderUsername: msg.fromUsername,
+            isEncrypted: !!decrypted,
+          };
+        });
+
+        setMessages(decryptedMessages);
+      });
+    }
+  }, [selectedContact, username, publicKey, secretKey]);
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  const handleSendMessage = (content: string) => {
+  function handleSendMessage(content: string) {
     if (!selectedContact) return;
 
-    const newMessage: ChatMessage = {
-      id: Date.now().toString(),
-      content,
-      timestamp: new Date(),
-      isSent: true,
-      senderUsername: username,
-      isEncrypted: true,
-    };
+    const encrypted = encryptMessage(content, selectedContact.user.publicKey, secretKey);
+    if (!encrypted) {
+      toast({ title: "Encryption Failed", description: "Could not encrypt message", variant: "destructive" });
+      return;
+    }
 
-    setMessages((prev) => [...prev, newMessage]);
+    socketService.sendMessage({
+      fromUsername: username,
+      toUsername: selectedContact.user.username,
+      ciphertext: encrypted.ciphertext,
+      nonce: encrypted.nonce,
+    });
 
-    setContacts((prev) =>
-      prev.map((c) =>
-        c.id === selectedContact.id && c.unreadCount
-          ? { ...c, unreadCount: 0 }
-          : c
-      )
-    );
-
-    setTimeout(() => {
-      const response: ChatMessage = {
-        id: (Date.now() + 1).toString(),
-        content: "Thanks for your message! This is an encrypted response.",
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `temp-${Date.now()}`,
+        content,
         timestamp: new Date(),
-        isSent: false,
-        senderUsername: selectedContact.username,
+        isSent: true,
+        senderUsername: username,
         isEncrypted: true,
-      };
-      setMessages((prev) => [...prev, response]);
-    }, 1000);
-  };
+      },
+    ]);
+  }
 
-  const handleAddContact = (userId: string, nickname?: string) => {
-    const user = allUsers.find((u) => u.id === userId);
-    if (user && !contacts.find((c) => c.id === userId)) {
-      setContacts((prev) => [...prev, { ...user, nickname }]);
-      console.log("Contact added:", { userId, nickname });
-    }
-  };
+  function handleAddContact(contactUserId: string, nickname?: string) {
+    addContactMutation.mutate({ contactUserId, nickname });
+  }
 
-  const handleSelectContact = (contact: Contact) => {
+  function handleSelectContact(contact: Contact & { user: User }) {
     setSelectedContact(contact);
-    if (contact.unreadCount) {
-      setContacts((prev) =>
-        prev.map((c) => (c.id === contact.id ? { ...c, unreadCount: 0 } : c))
-      );
-    }
-  };
+    setMessages([]);
+  }
+
+  const contactsWithOnline = contacts.map((c) => ({
+    ...c,
+    user: {
+      ...c.user,
+      isOnline: onlineUsers.has(c.user.username),
+    },
+  }));
+
+  const allUsersWithOnline = allUsers.map((u) => ({
+    id: u.id,
+    username: u.username,
+    publicKey: u.publicKey,
+    isOnline: onlineUsers.has(u.username),
+    userId,
+    contactUserId: u.id,
+    nickname: null,
+    createdAt: new Date(),
+    user: { ...u, isOnline: onlineUsers.has(u.username) },
+  }));
 
   return (
     <div className="h-screen flex">
@@ -133,9 +220,9 @@ export function EnhancedChatPage({
         </div>
 
         <ContactsPanel
-          contacts={contacts}
-          allUsers={allUsers}
-          selectedUserId={selectedContact?.id}
+          contacts={contactsWithOnline}
+          allUsers={allUsersWithOnline}
+          selectedUserId={selectedContact?.contactUserId}
           onSelectContact={handleSelectContact}
           onAddContact={handleAddContact}
         />
@@ -155,29 +242,23 @@ export function EnhancedChatPage({
 
       <div className="flex-1 flex flex-col">
         <ChatHeader
-          recipientUsername={selectedContact?.nickname || selectedContact?.username}
-          isOnline={selectedContact?.isOnline}
+          recipientUsername={selectedContact?.nickname || selectedContact?.user.username}
+          isOnline={selectedContact?.user.isOnline}
         />
 
         <ScrollArea className="flex-1 p-4">
           {selectedContact ? (
             <div className="space-y-4 max-w-3xl mx-auto">
-              {messages
-                .filter(
-                  (msg) =>
-                    (msg.isSent && msg.senderUsername === username) ||
-                    (!msg.isSent && msg.senderUsername === selectedContact.username)
-                )
-                .map((message) => (
-                  <MessageBubble
-                    key={message.id}
-                    content={message.content}
-                    timestamp={message.timestamp}
-                    isSent={message.isSent}
-                    isEncrypted={message.isEncrypted}
-                    senderUsername={message.senderUsername}
-                  />
-                ))}
+              {messages.map((message) => (
+                <MessageBubble
+                  key={message.id}
+                  content={message.content}
+                  timestamp={message.timestamp}
+                  isSent={message.isSent}
+                  isEncrypted={message.isEncrypted}
+                  senderUsername={message.senderUsername}
+                />
+              ))}
               <div ref={messagesEndRef} />
             </div>
           ) : (
@@ -205,15 +286,15 @@ export function EnhancedChatPage({
         <MessageInput
           onSend={handleSendMessage}
           disabled={!selectedContact}
-          recipientUsername={selectedContact?.nickname || selectedContact?.username}
+          recipientUsername={selectedContact?.nickname || selectedContact?.user.username}
         />
       </div>
 
       <div className="w-80 border-l p-4 hidden lg:block">
         <EncryptionStatus
           yourPublicKey={publicKey}
-          recipientPublicKey={selectedContact?.publicKey}
-          recipientUsername={selectedContact?.nickname || selectedContact?.username}
+          recipientPublicKey={selectedContact?.user.publicKey}
+          recipientUsername={selectedContact?.nickname || selectedContact?.user.username}
         />
       </div>
     </div>

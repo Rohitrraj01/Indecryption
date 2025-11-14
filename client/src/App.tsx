@@ -9,10 +9,13 @@ import { OtpVerification } from "@/components/OtpVerification";
 import { EnhancedChatPage } from "@/pages/enhanced-chat";
 import { generateKeyPair, type KeyPair } from "@/lib/crypto";
 import { useToast } from "@/hooks/use-toast";
+import { authApi } from "@/lib/api";
+import { socketService } from "@/lib/socket";
 
 type AuthStep = "login" | "otp" | "authenticated";
 
 interface UserSession {
+  userId: string;
   username: string;
   mobileNumber: string;
   keyPair: KeyPair;
@@ -36,6 +39,7 @@ function App() {
         const parsedSession = JSON.parse(stored);
         setSession(parsedSession);
         setAuthStep("authenticated");
+        socketService.connect(parsedSession.username);
       } catch (error) {
         console.error("Failed to restore session:", error);
         localStorage.removeItem("userSession");
@@ -43,68 +47,93 @@ function App() {
     }
   }, []);
 
-  const handleLoginSubmit = (username: string, mobileNumber: string) => {
-    setPendingAuth({ username, mobileNumber });
-    setAuthStep("otp");
-    
-    console.log("Sending OTP to:", mobileNumber);
-    toast({
-      title: "OTP Sent",
-      description: `Verification code sent to ${mobileNumber}`,
-    });
-  };
-
-  const handleOtpVerify = (otp: string) => {
-    console.log("Verifying OTP:", otp);
-    
-    if (!pendingAuth) return;
-
-    const keyPair = generateKeyPair();
-    const newSession: UserSession = {
-      username: pendingAuth.username,
-      mobileNumber: pendingAuth.mobileNumber,
-      keyPair,
-    };
-
-    setSession(newSession);
-    setAuthStep("authenticated");
-    localStorage.setItem("userSession", JSON.stringify(newSession));
-
-    toast({
-      title: "Authentication Successful",
-      description: "Your encryption keys have been generated",
-    });
-
-    console.log("User authenticated:", pendingAuth.username);
-    console.log("Public key:", keyPair.publicKey);
-  };
-
-  const handleOtpResend = () => {
-    if (pendingAuth) {
-      console.log("Resending OTP to:", pendingAuth.mobileNumber);
+  async function handleLoginSubmit(username: string, mobileNumber: string) {
+    try {
+      const response = await authApi.sendOtp(mobileNumber);
+      
+      setPendingAuth({ username, mobileNumber });
+      setAuthStep("otp");
+      
+      if (response.otp) {
+        toast({ title: "Development OTP", description: `Your OTP is: ${response.otp}` });
+      } else {
+        toast({ title: "OTP Sent", description: `Verification code sent to ${mobileNumber}` });
+      }
+    } catch (error) {
       toast({
-        title: "OTP Resent",
-        description: `New verification code sent to ${pendingAuth.mobileNumber}`,
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to send OTP",
+        variant: "destructive",
       });
     }
-  };
+  }
 
-  const handleBackToLogin = () => {
+  async function handleOtpVerify(otp: string) {
+    if (!pendingAuth) return;
+
+    try {
+      const keyPair = generateKeyPair();
+      
+      const response = await authApi.verifyOtp(
+        pendingAuth.username,
+        pendingAuth.mobileNumber,
+        otp,
+        keyPair.publicKey
+      );
+
+      const newSession: UserSession = {
+        userId: response.user.id,
+        username: pendingAuth.username,
+        mobileNumber: pendingAuth.mobileNumber,
+        keyPair,
+      };
+
+      setSession(newSession);
+      setAuthStep("authenticated");
+      localStorage.setItem("userSession", JSON.stringify(newSession));
+
+      socketService.connect(pendingAuth.username);
+
+      toast({ title: "Authentication Successful", description: "Your encryption keys have been generated" });
+    } catch (error) {
+      toast({
+        title: "Verification Failed",
+        description: error instanceof Error ? error.message : "Invalid OTP",
+        variant: "destructive",
+      });
+    }
+  }
+
+  async function handleOtpResend() {
+    if (!pendingAuth) return;
+
+    try {
+      const response = await authApi.sendOtp(pendingAuth.mobileNumber);
+      
+      if (response.otp) {
+        toast({ title: "Development OTP", description: `Your OTP is: ${response.otp}` });
+      } else {
+        toast({ title: "OTP Resent", description: `New verification code sent to ${pendingAuth.mobileNumber}` });
+      }
+    } catch (error) {
+      toast({ title: "Error", description: "Failed to resend OTP", variant: "destructive" });
+    }
+  }
+
+  function handleBackToLogin() {
     setAuthStep("login");
     setPendingAuth(null);
-  };
+  }
 
-  const handleLogout = () => {
+  function handleLogout() {
+    socketService.disconnect();
     setSession(null);
     setAuthStep("login");
     setPendingAuth(null);
     localStorage.removeItem("userSession");
     
-    toast({
-      title: "Logged Out",
-      description: "You have been securely logged out",
-    });
-  };
+    toast({ title: "Logged Out", description: "You have been securely logged out" });
+  }
 
   return (
     <QueryClientProvider client={queryClient}>
@@ -125,6 +154,7 @@ function App() {
           
           {authStep === "authenticated" && session && (
             <EnhancedChatPage
+              userId={session.userId}
               username={session.username}
               publicKey={session.keyPair.publicKey}
               secretKey={session.keyPair.secretKey}
