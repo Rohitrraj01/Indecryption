@@ -33,17 +33,37 @@ function App() {
   const { toast } = useToast();
 
   useEffect(() => {
+    console.log("App mounted, checking for saved session...");
     const stored = localStorage.getItem("userSession");
+    console.log("localStorage.userSession:", stored ? "EXISTS" : "EMPTY");
+    
     if (stored) {
       try {
         const parsedSession = JSON.parse(stored);
-        setSession(parsedSession);
-        setAuthStep("authenticated");
-        socketService.connect(parsedSession.username);
+        console.log("Parsed session:", { username: parsedSession.username, userId: parsedSession.userId });
+        
+        // Verify all required fields exist
+        if (parsedSession.userId && parsedSession.username && parsedSession.mobileNumber && parsedSession.keyPair) {
+          console.log("✓ Session valid, restoring for:", parsedSession.username);
+          setSession(parsedSession);
+          setAuthStep("authenticated");
+          socketService.connect(parsedSession.username);
+          console.log("✓ Session restored successfully");
+        } else {
+          console.warn("✗ Incomplete session data:", { 
+            hasUserId: !!parsedSession.userId,
+            hasUsername: !!parsedSession.username,
+            hasMobileNumber: !!parsedSession.mobileNumber,
+            hasKeyPair: !!parsedSession.keyPair
+          });
+          localStorage.removeItem("userSession");
+        }
       } catch (error) {
-        console.error("Failed to restore session:", error);
+        console.error("✗ Failed to restore session:", error);
         localStorage.removeItem("userSession");
       }
+    } else {
+      console.log("No saved session found");
     }
   }, []);
 
@@ -90,7 +110,10 @@ function App() {
 
       setSession(newSession);
       setAuthStep("authenticated");
-      localStorage.setItem("userSession", JSON.stringify(newSession));
+      const sessionString = JSON.stringify(newSession);
+      localStorage.setItem("userSession", sessionString);
+      console.log("Session saved:", { username: newSession.username, userId: newSession.userId });
+      console.log("localStorage check:", localStorage.getItem("userSession") ? "✓ Saved" : "✗ Not saved");
 
       socketService.connect(pendingAuth.username);
 

@@ -36,7 +36,7 @@ export function ContactsPanel({
   const filteredContacts = contacts.filter(
     (c) =>
       c.username.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      c.nickname?.toLowerCase().includes(searchQuery.toLowerCase())
+      (c.nickname && c.nickname.toLowerCase().includes(searchQuery.toLowerCase()))
   );
 
   const filteredAllUsers = allUsers.filter((u) =>

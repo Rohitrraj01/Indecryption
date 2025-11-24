@@ -74,8 +74,11 @@ class SocketService {
   sendMessage(data: {
     fromUsername: string;
     toUsername: string;
-    ciphertext: string;
-    nonce: string;
+    plaintext?: string; // NEW: plaintext for server-side encryption
+    ciphertext?: string; // FALLBACK: pre-encrypted
+    nonce?: string;
+    fromMobileNumber?: string;
+    toMobileNumber?: string;
   }) {
     if (this.socket?.connected) {
       this.socket.emit("send_message", data);

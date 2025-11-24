@@ -10,10 +10,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { UserPlus, Search, User } from "lucide-react";
+import { UserPlus, Search, Loader2 } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
 
 interface AddContactDialogProps {
   onAddContact: (userId: string, nickname?: string) => void;
@@ -32,28 +33,101 @@ export function AddContactDialog({ onAddContact }: AddContactDialogProps) {
   const [nickname, setNickname] = useState("");
   const [selectedUser, setSelectedUser] = useState<SearchResult | null>(null);
   const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { toast } = useToast();
 
-  const handleSearch = () => {
-    console.log("Searching for:", searchQuery);
-    const mockResults: SearchResult[] = [
-      { id: "1", username: "alice_wonder", mobileNumber: "9876543210", isOnline: true },
-      { id: "2", username: "bob_builder", mobileNumber: "9876543211", isOnline: false },
-      { id: "3", username: "charlie_brown", mobileNumber: "9876543212", isOnline: true },
-    ].filter(u => 
-      u.username.includes(searchQuery.toLowerCase()) || 
-      u.mobileNumber.includes(searchQuery)
-    );
-    setSearchResults(mockResults);
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      setError("Please enter a username or mobile number");
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    setSearchResults([]);
+
+    try {
+      const response = await fetch(
+        `/api/search/users?q=${encodeURIComponent(searchQuery)}`
+      );
+
+      if (!response.ok) {
+        throw new Error("Search failed");
+      }
+
+      const results: SearchResult[] = await response.json();
+
+      if (results.length === 0) {
+        setError("No users found");
+      } else {
+        setSearchResults(results);
+      }
+    } catch (err) {
+      console.error("Search error:", err);
+      setError("Failed to search users. Please try again.");
+      toast({
+        title: "Search Error",
+        description: "Failed to search for users",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleAddContact = () => {
-    if (selectedUser) {
+  const handleAddContact = async () => {
+    if (!selectedUser) return;
+
+    try {
+      // Get userId from userSession
+      const userSessionStr = localStorage.getItem("userSession");
+      if (!userSessionStr) {
+        throw new Error("User not authenticated");
+      }
+      
+      const userSession = JSON.parse(userSessionStr);
+      const userId = userSession.userId;
+      
+      if (!userId) {
+        throw new Error("User not authenticated");
+      }
+
+      const response = await fetch("/api/contacts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          contactUserId: selectedUser.id,
+          nickname: nickname || null,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to add contact");
+      }
+
+      toast({
+        title: "Success",
+        description: `Added ${selectedUser.username} as a contact`,
+      });
+
       onAddContact(selectedUser.id, nickname || undefined);
       setOpen(false);
       setSearchQuery("");
       setNickname("");
       setSelectedUser(null);
       setSearchResults([]);
+      setError(null);
+    } catch (err) {
+      console.error("Add contact error:", err);
+      const errorMessage = err instanceof Error ? err.message : "Failed to add contact";
+      toast({
+        title: "Error",
+        description: errorMessage,
+        variant: "destructive",
+      });
     }
   };
 
@@ -80,16 +154,35 @@ export function AddContactDialog({ onAddContact }: AddContactDialogProps) {
               <Input
                 placeholder="Username or mobile number"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setError(null);
+                }}
                 onKeyDown={(e) => e.key === "Enter" && handleSearch()}
                 className="pl-10"
                 data-testid="input-search-contact"
+                disabled={isLoading}
               />
             </div>
-            <Button onClick={handleSearch} data-testid="button-search">
-              Search
+            <Button
+              onClick={handleSearch}
+              data-testid="button-search"
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              ) : (
+                <Search className="w-4 h-4 mr-2" />
+              )}
+              {isLoading ? "Searching..." : "Search"}
             </Button>
           </div>
+
+          {error && (
+            <div className="p-3 bg-destructive/10 text-destructive rounded-md text-sm">
+              {error}
+            </div>
+          )}
 
           {searchResults.length > 0 && (
             <ScrollArea className="h-48 border rounded-lg">

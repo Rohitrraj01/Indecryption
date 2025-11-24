@@ -74,4 +74,13 @@ export const messageApi = {
     const res = await apiRequest("GET", `/api/messages/${username1}/${username2}`);
     return await res.json() as Message[];
   },
+
+  async decryptMessage(ciphertext: string, senderNumber: string, receiverNumber: string) {
+    const res = await apiRequest("POST", "/api/decrypt-message", {
+      ciphertext,
+      senderNumber,
+      receiverNumber,
+    });
+    return await res.json() as { plaintext: string };
+  },
 };

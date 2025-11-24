@@ -20,6 +20,14 @@ export function encryptMessage(
   senderSecretKey: string
 ): { ciphertext: string; nonce: string } | null {
   try {
+    if (!recipientPublicKey || !senderSecretKey) {
+      console.error("Missing encryption keys:", { 
+        hasRecipientPublicKey: !!recipientPublicKey,
+        hasSenderSecretKey: !!senderSecretKey 
+      });
+      return null;
+    }
+
     const messageUint8 = encodeUTF8(message);
     const nonce = nacl.randomBytes(nacl.box.nonceLength);
     const recipientPublicKeyUint8 = decodeBase64(recipientPublicKey);
@@ -32,7 +40,10 @@ export function encryptMessage(
       senderSecretKeyUint8
     );
 
-    if (!encrypted) return null;
+    if (!encrypted) {
+      console.error("nacl.box returned null");
+      return null;
+    }
 
     return {
       ciphertext: encodeBase64(encrypted),
